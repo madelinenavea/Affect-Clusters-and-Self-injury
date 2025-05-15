@@ -9,7 +9,7 @@ Using latent profile analysis to examine the associations between different clus
 
 ## 🔍 Overview
 
-This project applies unsupervised machine learning techniques to investigate how **momentary affective states** cluster into **latent profiles** and how these profiles relate to **self-injurious behaviors (SIBs)**. Using **Ecological Momentary Assessment (EMA)** data collected over 14 days (N = 124 participants, N ≈ 6600 observations), we aim to identify affective states associated with higher risk for SIBs.
+This project applies cluster analysis techniques to investigate how **momentary affective states** cluster into **latent profiles** and their associations after engaging in **self-injurious behaviors (SIBs)**. Using **Ecological Momentary Assessment (EMA)** data collected over 14 days (N = 124 participants, N ≈ 6600 observations), we aim to identify affective states associated with higher risk for SIBs.
 
 ---
 
@@ -37,6 +37,7 @@ Five latent affective profiles were identified:
 | P5      | High Positive Affect     | 626        | 34         |
 
 ### Key Insights:
+- As expected, results indicate that SIBs may be habitual in nature, such that many are used to **relieve** affect (i.e., their overall affect goes down to baseline after engaging in a SIB). However, it is interesting to note that P1 (moderate positive affect) reported the second most SIBs for fasting and restricting.
 - **P3 (Low Overall Affect)** exhibited the **highest frequency of SIBs**, despite low arousal.
 - **P5 (High PA)** reported the **lowest SIB engagement**, suggesting PA may be a protective state.
 - Surprisingly, **P1 (Moderate PA)** had the **second-highest SIBs**, implying that moderate PA alone is insufficient to mitigate SIB risk.
@@ -44,16 +45,15 @@ Five latent affective profiles were identified:
 ---
 
 ## 🤖 Data Science Contributions
-
+- Demonstrates that in some moments, individuals feel more positive emotions after engaging in fasting and restriction.
 - Demonstrates how **unsupervised clustering (LPA)** on **time-series affect data** can yield interpretable psychological profiles.
-- Highlights real-world issues in model convergence and practical solutions (e.g., fallback to simpler models).
-- Explores **behavioral prediction via latent state classification**, relevant to affective computing and just-in-time adaptive interventions (JITAIs).
+- Real-world issues in model convergence happen! This project displays solutions and restraints against using more complex models (sometimes, the more simple, the better!)
 
 ---
 
 ## 🔍 Future Directions
 
-- Test predictive validity of **pre-SIB affect profiles** vs. post-SIB.
+- Next steps I will be taking: running the same model on **pre-SIB affect profiles**, rather than post-SIB.
 - Integrate physiological signals or passive data for multimodal modeling.
 - Apply **sequence modeling (e.g., HMM, RNNs)** to capture transitions between states over time.
 
