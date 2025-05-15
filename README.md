@@ -36,22 +36,16 @@ Five latent affective profiles were identified:
 | P4      | High Negative Affect     | 463        | 62         |
 | P5      | High Positive Affect     | 626        | 34         |
 
-### Key Insights:
+### Key Results:
 - As expected, results indicate that SIBs may be habitual in nature, such that many are used to **relieve** affect (i.e., their overall affect goes down to baseline after engaging in a SIB). However, it is interesting to note that P1 (moderate positive affect) reported the second most SIBs for fasting and restricting.
 - **P3 (Low Overall Affect)** exhibited the **highest frequency of SIBs**, despite low arousal.
 - **P5 (High PA)** reported the **lowest SIB engagement**, suggesting PA may be a protective state.
 - Surprisingly, **P1 (Moderate PA)** had the **second-highest SIBs**, implying that moderate PA alone is insufficient to mitigate SIB risk.
-
----
-
-## 🤖 Data Science Contributions
-- Demonstrates that in some moments, individuals feel more positive emotions after engaging in fasting and restriction.
-- Demonstrates how **unsupervised clustering (LPA)** on **time-series affect data** can yield interpretable psychological profiles.
 - Real-world issues in model convergence happen! This project displays solutions and restraints against using more complex models (sometimes, the more simple, the better!)
 
 ---
 
-## 🔍 Future Directions
+## 💡 Future Directions
 
 - Next steps I will be taking: running the same model on **pre-SIB affect profiles**, rather than post-SIB.
 - Integrate physiological signals or passive data for multimodal modeling.
