@@ -1,5 +1,5 @@
 # Cluster-Analysis-on-Affect
-Using latent profile analysis to examine the associations between different clusters of affect and self-injury.
+Using latent profile analysis to examine the associations between different clusters of affect (in real-time) and self-injury.
 
 **Conference Project Title**: Associations Between Latent Profiles of Momentary Affect and Self-Injurious Behaviors
 **Authors**: Madeline M. Navea, Jannah R. Moussaoui, April R. Smith, Elizabeth A. Velkoff  
