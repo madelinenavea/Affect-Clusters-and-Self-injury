@@ -7,13 +7,13 @@ Using latent profile analysis to examine the associations between different clus
 
 ---
 
-## 🔍 Overview
+## Overview
 
 This project applies cluster analysis techniques to investigate how **momentary affective states** cluster into **latent profiles** and their associations after engaging in **self-injurious behaviors (SIBs)**. Using **Ecological Momentary Assessment (EMA)** data collected over 14 days (N = 124 participants, N ≈ 6600 observations), we aim to identify affective states associated with higher risk for SIBs.
 
 ---
 
-## 🧪 Methods
+## Methods
 
 - **Data Type**: EMA including affect + SIB reports
 - **Participants**: Individuals reporting ≥3 SIBs (non-suicidal self-injury or eating disorder behaviors) in the past month
@@ -24,7 +24,7 @@ This project applies cluster analysis techniques to investigate how **momentary 
 
 ---
 
-## 📈 Results
+## Results
 
 Five latent affective profiles were identified:
 
@@ -45,7 +45,7 @@ Five latent affective profiles were identified:
 
 ---
 
-## 💡 Future Directions
+## Future Directions
 
 - Next steps I will be taking: running the same model on **pre-SIB affect profiles**, rather than post-SIB.
 - Integrate physiological signals or passive data for multimodal modeling.
