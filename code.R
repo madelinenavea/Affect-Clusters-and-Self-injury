@@ -1,0 +1,496 @@
+## ----setup------------------------------------------------------------------------------------------------------------------------
+# Load Libraries
+library(tidyverse)
+library(magrittr)
+library(tidyLPA)
+library(mclust)
+library(missForest)
+library(mice)
+library(cowplot)
+library(beepr)
+library(Matrix)
+#library(foreign)
+#library(expss)
+#library(DescTools)
+#library(Rmisc)
+#library(lsr)
+#library(effectsize)
+#library(matrixStats)
+#library(knitr)
+#library(patchwork)
+#library(multcomp)
+#library(sjstats)
+#library(sjPlot)
+#library(sjmisc)
+#library(sjlabelled)
+#library(DataCombine)
+#library(modelsummary)
+#library(fmsb)
+
+# Function to convert H:M:S format to minutes
+to_minutes <- function(time_str) {
+  if (time_str == " ") {
+    return(NA)                             # Return NA if the string is empty
+  } else {
+    parts <- strsplit(time_str, ":")[[1]]  # Split the string by ":"
+    hours <- as.numeric(parts[1])          # Extract hours
+    minutes <- as.numeric(parts[2])        # Extract minutes
+    return(hours * 60 + minutes)           # Calculate total minutes
+  }}
+
+
+## ----data_prep--------------------------------------------------------------------------------------------------------------------
+# Read the data frame
+raw_data <- read.csv("Raw data/CompleteDay3Up.csv")
+
+# Creating subset data frame
+lpa_data <- raw_data %>% 
+  dplyr::select(
+    PersonID,                                                                                       # Identifier
+    Male, Ethnicity, Race, Height_totalin, Weight, BMI, Age, Gen,                                   # Demographics
+    SessionTime, studydays, EMA_instances, EMA_total,                                               # EMA Metadata
+    Distress, Excited, Upset, Inspired, Nervous,                                                    
+    Determined, Scared, Afraid, Enthusiast, Alert,                                                  
+    SIB_Binge, SIB_Vomit, SIB_Laxative, SIB_Exercise, SIB_Fast, SIB_Restrict, SIB_NSSI,             # Binary engagement of SIB
+    BingeMinutes, VomitMinutes, LaxMinutes, ExMinutes, FastMinutes, ResMinutes, NSSIMinutes) %>%    # SIB duration
+    dplyr::rename(day_number = studydays) %>% 
+    mutate_all(~ ifelse(. == -999, NA, .),
+             ~ ifelse(. == "NaN", NA, .)) 
+  
+# Converting SIB duration from H:M:S format to minutes
+lpa_data %<>%
+  mutate(
+    BingeMinutes_usethis = sapply(BingeMinutes, to_minutes),
+    VomitMinutes_usethis = sapply(VomitMinutes, to_minutes),
+    LaxMinutes_usethis = sapply(LaxMinutes, to_minutes),
+    ExMinutes_usethis = sapply(ExMinutes, to_minutes),
+    FastMinutes_usethis = sapply(FastMinutes, to_minutes),
+    ResMinutes_usethis = sapply(ResMinutes, to_minutes),
+    NSSIMinutes_usethis = sapply(NSSIMinutes, to_minutes)) %>% 
+  
+# Combining affect, SIB engagement, and SIB duration
+    mutate(
+      Affect_intensity = rowSums(
+        dplyr::select(., c(Distress, Excited, Upset, Inspired, 
+                           Nervous, Determined, Scared, Afraid, Enthusiast, Alert)), na.rm = TRUE),
+     Excited_Enthusiast = rowMeans(cbind(Excited, Enthusiast), na.rm = TRUE),
+    Scared_Afraid = rowMeans(cbind(Scared, Afraid), na.rm = TRUE),
+      SIB_engagement = rowSums(
+        dplyr::select(., c(SIB_Binge,SIB_Vomit,SIB_Laxative, SIB_Exercise,SIB_Fast, SIB_Restrict, SIB_NSSI)), na.rm = TRUE),
+      SIB_duration = rowSums(
+        dplyr::select(., c(BingeMinutes_usethis, VomitMinutes_usethis, LaxMinutes_usethis, ExMinutes_usethis, FastMinutes_usethis, ResMinutes_usethis, NSSIMinutes_usethis)),na.rm=TRUE))
+
+# Create meta data
+# Use the SessionTime variable to count off observations
+# Convert SessionTime to a POSIXct object
+lpa_data$SessionTime <- as.POSIXct(lpa_data$SessionTime, format = "%m/%d/%y %H:%M")
+ 
+# Group by ID and count the number of session times
+lpa_data %<>%
+  arrange(PersonID, day_number, SessionTime) %>%   # Arrange data for counting
+  group_by(PersonID) %>%                           # Group by ID_MOMENT and day number
+  mutate(observation_number = row_number())        # Count observations within each group
+
+# View the resulting data frame
+table(lpa_data$day_number)                         # Observations look good
+table(lpa_data$observation_number)                 # Number of days looks good
+
+# Calculate maximum day and observation number for each ID_MOMENT
+max_num <- lpa_data %>%
+  group_by(PersonID) %>%
+  summarise(day_total = max(day_number, na.rm = TRUE),
+            observation_total = max(observation_number, na.rm = TRUE))
+
+# Join day_total into profile_wide
+lpa_data %<>%
+  left_join(max_num, by = "PersonID")
+
+lpa_data %<>%
+  mutate(
+    SIB_engagement_binary = ifelse(SIB_engagement > 0, 1, 0)) %>% 
+  mutate(
+    SIB_engagement_binary_lagged = lag(SIB_engagement_binary, n = 1),
+    SIB_duration_lagged = lag(SIB_duration, n = 1),
+    SIB_engagement_lagged = lag(SIB_engagement, n = 1))
+
+# Create a wide-form version of the data for LPA construction
+lpa_data_calculated <- lpa_data %>% 
+  dplyr::select(
+    PersonID, observation_number, observation_total,
+    Distress, Upset, Inspired, Nervous,                                                    
+    Determined, Scared, Afraid, Excited, Enthusiast, Scared_Afraid, Excited_Enthusiast, Alert, 
+    SIB_engagement_binary_lagged, SIB_engagement_lagged, SIB_duration_lagged) %>% 
+  unique() %>% 
+   mutate_all(~ ifelse(. == "NaN", NA, .)) %>% 
+  ungroup()
+
+
+## ---------------------------------------------------------------------------------------------------------------------------------
+data_imputed <- readRDS("RDS/data_imputed.rds")
+
+LPA_model1_profile1 <- readRDS("RDS/LPA_model1_profile1.rds")
+LPA_model1_profile2 <- readRDS("RDS/LPA_model1_profile2.rds")
+LPA_model1_profile3 <- readRDS("RDS/LPA_model1_profile3.rds")
+LPA_model1_profile4 <- readRDS("RDS/LPA_model1_profile4.rds")
+LPA_model1_profile5 <- readRDS("RDS/LPA_model1_profile5.rds")
+LPA_model1_profile6 <- readRDS("RDS/LPA_model1_profile6.rds")
+
+LPA_model1_profile1_df <- readRDS("RDS/LPA_model1_profile1_df.rds")
+LPA_model1_profile2_df <- readRDS("RDS/LPA_model1_profile2_df.rds")
+LPA_model1_profile3_df <- readRDS("RDS/LPA_model1_profile3_df.rds")
+LPA_model1_profile4_df <- readRDS("RDS/LPA_model1_profile4_df.rds")
+LPA_model1_profile5_df <- readRDS("RDS/LPA_model1_profile5_df.rds")
+LPA_model1_profile6_df <- readRDS("RDS/LPA_model1_profile6_df.rds")
+
+plot_long1_1 <- readRDS("RDS/plot_long1_1.rds")
+plot_long1_2 <- readRDS("RDS/plot_long1_2.rds")
+plot_long1_3 <- readRDS("RDS/plot_long1_3.rds")
+plot_long1_4 <- readRDS("RDS/plot_long1_4.rds")
+plot_long1_5 <- readRDS("RDS/plot_long1_5.rds")
+plot_long1_6 <- readRDS("RDS/plot_long1_6.rds")
+
+plot_model1_profile1 <- readRDS("RDS/plot_model1_profile1.rds")
+plot_model1_profile2 <- readRDS("RDS/plot_model1_profile2.rds")
+plot_model1_profile3 <- readRDS("RDS/plot_model1_profile3.rds")
+plot_model1_profile4 <- readRDS("RDS/plot_model1_profile4.rds")
+plot_model1_profile5 <- readRDS("RDS/plot_model1_profile5.rds")
+plot_model1_profile6 <- readRDS("RDS/plot_model1_profile6.rds")
+
+
+## ---------------------------------------------------------------------------------------------------------------------------------
+plot_1_1 <- readRDS("RDS/plot_1_1.rds")
+plot_1_2 <- readRDS("RDS/plot_1_2.rds")
+plot_1_3 <- readRDS("RDS/plot_1_3.rds")
+plot_1_4 <- readRDS("RDS/plot_1_4.rds")
+plot_1_5 <- readRDS("RDS/plot_1_5.rds")
+plot_1_6 <- readRDS("RDS/plot_1_6.rds")
+plot_1_7 <- readRDS("RDS/plot_1_7.rds")
+plot_1_8 <- readRDS("RDS/plot_1_8.rds")
+plot_1_9 <- readRDS("RDS/plot_1_9.rds")
+plot_1_10 <- readRDS("RDS/plot_1_10.rds")
+plot_1_11 <- readRDS("RDS/plot_1_11.rds")
+
+plot_1_1
+plot_1_2
+plot_1_3
+plot_1_4
+plot_1_5
+plot_1_6
+plot_1_7
+plot_1_8
+plot_1_9
+plot_1_10
+plot_1_11
+
+ggsave("Outputs/Model 1.jpeg", plot = plot_grid(
+  plot_1_1,
+  plot_1_2,
+  plot_1_3,
+  plot_1_4,
+  plot_1_5,
+  plot_1_6,
+  plot_1_7,
+  plot_1_8,
+  plot_1_9,
+  plot_1_10,
+  plot_1_11, ncol = 5, align = "h", rel_widths = c(1.2, 1.2, 1.2, 1.2, 1.2)), width = 50, height = 20, limitsize = F)
+
+
+## ----message=FALSE, warning=FALSE-------------------------------------------------------------------------------------------------
+# set.seed(123)
+# LPA <- lpa_data_calculated[1:6600, ] %>%
+#   dplyr::select(Distress, Excited_Enthusiast, Upset, Inspired, Nervous,                                           
+#     Determined, Scared_Afraid, Alert) %>% 
+#     estimate_profiles(1:6, 
+#                     variances = c("varying", "varying", "equal", "equal"),
+#                     covariances = c("zero", "varying", "zero", "equal")) %>%
+#   compare_solutions(statistics = c("AIC", "BIC", "SABIC", "Entropy", "LogLik"))
+# print(LPA)
+# beep()
+# saveRDS(LPA, file = "RDS/LPA.rds")
+# LPA <- readRDS("RDS/LPA.rds")
+
+# TidyLPA allows for 4 models (Model 1, 2, 3, and 6)
+# Mplus allows for an additional 2 models (Model 4 and 5)
+# Equal variances and covariances fixed to 0 (Model 1)
+# Varying variances and covariances fixed to 0 (Model 2)
+# Equal variances and equal covariances (Model 3)
+# Varying variances and equal covariances (Model 4)
+# Equal variances and varying covariances (Model 5)
+# Varying variances and varying covariances (Model 6)
+
+
+## ---------------------------------------------------------------------------------------------------------------------------------
+# set.seed(123)
+# lpa_data_imputed <- lpa_data_calculated[1:6600, ] %>%
+#   dplyr::select(Distress, Upset, Inspired, Nervous,                                                  
+#                 Determined, Scared_Afraid, Excited_Enthusiast, Alert)
+# imputed_data <- mice(lpa_data_imputed, method = "rf", m = 1) #use random forest imputation
+# data_imputed <- complete(imputed_data, 1)
+# 
+# # Checking if there are any NAs
+# any(is.na(data_imputed))
+# saveRDS(data_imputed, file = "RDS/data_imputed.rds")
+
+
+## ---------------------------------------------------------------------------------------------------------------------------------
+# # estimate profiles
+# set.seed(123)
+# LPA_model1_profile5 <- Mclust(data_imputed, G = 5, modelNames = "EEI") 
+# LPA_model1_profile5_df <- data.frame(
+#   ID = 1:length(LPA_model1_profile5$classification),
+#   Class = LPA_model1_profile5$classification)
+# classification1_5 <- LPA_model1_profile5$classification
+# LPA_model1_profile5_df <- cbind(
+#   lpa_data_calculated,                      
+#   Class = classification1_5)
+
+
+## ---------------------------------------------------------------------------------------------------------------------------------
+# pivoting longer
+plot_long1_5 <- LPA_model1_profile5_df %>%
+  dplyr::select(Class, 
+                Distress, Upset, Inspired, Nervous,                                                  
+    Determined, Scared_Afraid, Excited_Enthusiast, Alert) %>%  
+  pivot_longer(cols = c(
+    Distress, Upset, Inspired, Nervous,                                                    
+    Determined, Scared_Afraid, Excited_Enthusiast,, Alert), 
+               names_to = "Affect",
+               values_to = "Affect_score")
+
+# creating mean, sd, etc.
+plot_model1_profile5 <- plot_long1_5 %>%
+  dplyr::group_by(Class, Affect) %>%
+  dplyr::summarise(mean_score = mean(Affect_score, na.rm = TRUE),
+                   sd_score = sd(Affect_score, na.rm = TRUE),
+                   n = n(), .groups = "drop") %>%
+  mutate(se_score = sd_score / sqrt(n)) %>% 
+  ungroup()
+plot_model1_profile5$Class <- factor(plot_model1_profile5$Class)
+
+plot_model1_profile5$Affect <- factor(plot_model1_profile5$Affect, 
+         levels = c("Distress", "Upset", "Nervous", "Scared_Afraid", 
+                    "Inspired", "Determined", "Alert", "Excited_Enthusiast"))
+
+
+## ----message=FALSE, warning=FALSE-------------------------------------------------------------------------------------------------
+profileDf <- function(model, data, solution_number) {
+  posterior_probs <- as.data.frame(model$z)
+  colnames(posterior_probs) <- paste0("Class_", 1:ncol(posterior_probs))
+  
+  profile_df <- data %>%
+    dplyr::mutate(
+      Class = model$classification,
+      posterior_prob = apply(posterior_probs, 1, max),
+      Assigned_Class = apply(posterior_probs, 1, which.max)
+    ) %>%
+    dplyr::select(Class, posterior_prob, Assigned_Class) %>%
+    dplyr::mutate(Solution = solution_number)
+  
+  return(profile_df)
+}
+
+# Generate profiles for each solution
+profile1 <- profileDf(LPA_model1_profile1, data_imputed, 1)
+profile2 <- profileDf(LPA_model1_profile2, data_imputed, 2)
+profile3 <- profileDf(LPA_model1_profile3, data_imputed, 3)
+profile4 <- profileDf(LPA_model1_profile4, data_imputed, 4)
+profile5 <- profileDf(LPA_model1_profile5, data_imputed, 5)
+profile6 <- profileDf(LPA_model1_profile6, data_imputed, 6)
+
+
+posteriors1 <- profile1 %>% group_by(Class) %>%
+  summarize(
+    mean_posprob = mean(posterior_prob),
+    prop_over80 = mean(posterior_prob > 0.8)) %>%
+  mutate(Solution = 1)
+
+#create for each
+posteriors2 <- profile2 %>% group_by(Class) %>%
+  summarize(mean_posprob = mean(posterior_prob), prop_over80 = mean(posterior_prob > 0.8)) %>% mutate(Solution = 2)
+posteriors3 <- profile3 %>% group_by(Class) %>% summarize(mean_posprob = mean(posterior_prob), prop_over80 = mean(posterior_prob > 0.8)) %>% mutate(Solution = 3)
+posteriors4 <- profile4 %>% group_by(Class) %>% summarize(mean_posprob = mean(posterior_prob), prop_over80 = mean(posterior_prob > 0.8)) %>% mutate(Solution = 4)
+posteriors5 <- profile5 %>% group_by(Class) %>% summarize(mean_posprob = mean(posterior_prob), prop_over80 = mean(posterior_prob > 0.8)) %>% mutate(Solution = 5)
+posteriors6 <- profile6 %>% group_by(Class) %>% summarize(mean_posprob = mean(posterior_prob), prop_over80 = mean(posterior_prob > 0.8)) %>% mutate(Solution = 6)
+
+# Bind all together
+posterior_summary <- bind_rows(posteriors1, posteriors2, posteriors3, posteriors4, posteriors5, posteriors6)
+write.csv(posterior_summary, "Outputs/Table1_Posteriors1.csv", row.names = FALSE)
+
+
+## ---------------------------------------------------------------------------------------------------------------------------------
+plot_1_5 <- ggplot(plot_model1_profile5, aes(x = Affect, y = mean_score, group = Class, 
+                                              color = Class, shape = Class, fill = Class)) +
+  geom_point(size = 3, stroke = 1) +
+  geom_line(size = 1.25) +
+  # geom_errorbar(aes(ymin = mean_score - se_score, ymax = mean_score + se_score), width = 2) +
+  scale_color_manual(values = c("1" = "#1D6E9A", "2" = "#E4ACDF", "3" = "#221D23", "4" = "#FE5F55",
+                                 "5"= "#A36678")) +
+  scale_fill_manual(values = c("1" = "#1D6E9A", "2" = "#E4ACDF", "3" = "#221D23", "4" = "#FE5F55",
+                                "5" = "#A36678")) +
+  scale_shape_manual(values = c("1" = 21, "2" = 22, "3" = 23, "4" = 24, "5" = 25)) +
+  scale_x_discrete(labels = c("Scared_Afraid" = "Scared/Afraid", 
+                              "Excited_Enthusiast" = "Excited/Enthusiastic")) +
+  labs(title = "Affective States by Profile",
+       x = " ",
+       y = "Score",
+       color = "Class",
+       shape = "Class",
+       fill = "Class",
+       linetype = "Class") +
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "right")
+
+ggsave("Outputs/Affect_classes.jpeg", width = 7, height = 6)
+
+
+## ---------------------------------------------------------------------------------------------------------------------------------
+# Prepare data to plot class associations with SIBs
+
+# create frequency counts for each type of sib
+sib_totals <- lpa_data %>%
+  group_by(PersonID, observation_number) %>%
+  summarise(
+    SIB_Binge = sum(SIB_Binge, na.rm = TRUE),
+    SIB_Vomit = sum(SIB_Vomit, na.rm = TRUE),
+    SIB_Laxative = sum(SIB_Laxative, na.rm = TRUE),
+    SIB_Exercise = sum(SIB_Exercise, na.rm = TRUE),
+    SIB_Fast = sum(SIB_Fast, na.rm = TRUE),
+    SIB_Restrict = sum(SIB_Restrict, na.rm = TRUE),
+    SIB_NSSI = sum(SIB_NSSI, na.rm = TRUE),
+    Total_SIBs = sum(SIB_Binge, SIB_Vomit, SIB_Laxative, SIB_Exercise, SIB_Fast, SIB_Restrict, SIB_NSSI, na.rm = TRUE)) %>% 
+  mutate(
+    tracking = paste0(PersonID, "_", observation_number)) #track the type of sib for each person (merge by this later)
+
+df_freq_plot <- LPA_model1_profile5_df %>%
+  dplyr::select(PersonID, Class, observation_number) %>% 
+  mutate(
+    tracking = paste0(PersonID, "_", observation_number)) #track the type of sib for each person (merge by this later)
+
+freq_plot <- merge(df_freq_plot, sib_totals, by = "tracking") #merge by the tracking column
+table(freq_plot$Class)
+
+#group by class and create class sums for each sib type, along with the total SIB count
+test1 <- freq_plot %>%
+  dplyr::group_by(Class) %>%
+  dplyr::summarise(
+    Total_SIB_Binge = sum(SIB_Binge, na.rm = TRUE),
+    Total_SIB_Vomit = sum(SIB_Vomit, na.rm = TRUE),
+    Total_SIB_Laxative = sum(SIB_Laxative, na.rm = TRUE),
+    Total_SIB_Exercise = sum(SIB_Exercise, na.rm = TRUE),
+    Total_SIB_Fast = sum(SIB_Fast, na.rm = TRUE),
+    Total_SIB_Restrict = sum(SIB_Restrict, na.rm = TRUE),
+    Total_SIB_NSSI = sum(SIB_NSSI, na.rm = TRUE),
+    Total_SIBs = sum(Total_SIB_Binge, Total_SIB_Vomit, Total_SIB_Laxative, 
+                    Total_SIB_Exercise, Total_SIB_Fast, Total_SIB_Restrict, Total_SIB_NSSI, 
+                    na.rm = TRUE))
+# pivot df longer
+freq_plot %<>%
+  dplyr::select(Class, SIB_Binge, SIB_Vomit, SIB_Laxative, SIB_Exercise, SIB_Fast, SIB_Restrict, SIB_NSSI) %>%  
+  pivot_longer(cols = c(SIB_Binge, SIB_Vomit, SIB_Laxative, SIB_Exercise, SIB_Fast, SIB_Restrict, SIB_NSSI), 
+               names_to = "SIBs",
+               values_to = "SIB_score") %>% 
+  #rename them for visuals
+  mutate(
+    SIBs = case_when(
+      SIBs == "SIB_Binge" ~ "Binge",
+      SIBs == "SIB_Vomit" ~ "Vomit",
+      SIBs == "SIB_Laxative" ~ "Laxative",
+      SIBs == "SIB_Exercise" ~ "Exercise",
+      SIBs == "SIB_Fast" ~ "Fast",
+      SIBs == "SIB_Restrict" ~ "Restrict",
+      SIBs == "SIB_NSSI" ~ "NSSI",
+      TRUE ~ SIBs)) %>%
+  group_by(Class, SIBs) %>%
+  summarise(total_SIB_score = sum(SIB_score, na.rm = TRUE)) %>%
+  ungroup()
+
+freq_plot$total_SIB_score <- as.numeric(freq_plot$total_SIB_score)
+
+
+## ---------------------------------------------------------------------------------------------------------------------------------
+ggplot(freq_plot, aes(x = SIBs, y = total_SIB_score, fill = factor(Class))) +
+  geom_col(position = "dodge") + 
+  scale_fill_manual(values = c("1" = "#1D6E9A", "2" = "#E4ACDF", "3" = "#221D23", 
+                               "4" = "#FE5F55", "5"= "#A36678")) +
+  scale_y_continuous(limits = c(0, 60)) +
+  labs(title = "SIBs by Affective Profile",
+       x = " ",
+       y = "Total SIB Counts",
+       fill = "Class") +
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1))
+ggsave("Outputs/LPA_by_SIB_freq.jpg", dpi = 2000, width = 7, height = 6)
+
+
+## ---------------------------------------------------------------------------------------------------------------------------------
+sib_totals <- lpa_data %>%
+  group_by(PersonID) %>%
+  summarise(
+    SIB_Binge = sum(SIB_Binge, na.rm = TRUE),
+    SIB_Vomit = sum(SIB_Vomit, na.rm = TRUE),
+    SIB_Laxative = sum(SIB_Laxative, na.rm = TRUE),
+    SIB_Exercise = sum(SIB_Exercise, na.rm = TRUE),
+    SIB_Fast = sum(SIB_Fast, na.rm = TRUE),
+    SIB_Restrict = sum(SIB_Restrict, na.rm = TRUE),
+    SIB_NSSI = sum(SIB_NSSI, na.rm = TRUE),
+    Total_SIBs = sum(SIB_Binge, SIB_Vomit, SIB_Laxative, SIB_Exercise, SIB_Fast, SIB_Restrict, SIB_NSSI, na.rm = TRUE))
+
+df_plot <- LPA_model1_profile5_df %>%
+  dplyr::select(PersonID, Class) %>%
+  left_join(sib_totals %>%
+              dplyr::select(PersonID, SIB_Binge, SIB_Vomit, SIB_Laxative, 
+                            SIB_Exercise, SIB_Fast, SIB_Restrict, SIB_NSSI, Total_SIBs),
+            by = "PersonID")
+df_plot$Class <- as.factor(df_plot$Class)
+table(df_plot$Class)
+
+df_plot %<>%
+  dplyr::select(Class, SIB_Binge, SIB_Vomit, SIB_Laxative, SIB_Exercise, SIB_Fast, SIB_Restrict, SIB_NSSI) %>%  
+  pivot_longer(cols = c(SIB_Binge, SIB_Vomit, SIB_Laxative, SIB_Exercise, SIB_Fast, SIB_Restrict, SIB_NSSI), 
+               names_to = "SIBs",
+               values_to = "SIB_score") %>% 
+  mutate(
+    SIBs = case_when(
+      SIBs == "SIB_Binge" ~ "Binge",
+      SIBs == "SIB_Vomit" ~ "Vomit",
+      SIBs == "SIB_Laxative" ~ "Laxative",
+      SIBs == "SIB_Exercise" ~ "Exercise",
+      SIBs == "SIB_Fast" ~ "Fast",
+      SIBs == "SIB_Restrict" ~ "Restrict",
+      SIBs == "SIB_NSSI" ~ "NSSI",
+      TRUE ~ SIBs)) %>%
+  group_by(Class, SIBs) %>%
+  dplyr::summarise(mean_score = mean(SIB_score, na.rm = TRUE),
+            sd_score = sd(SIB_score, na.rm = TRUE),
+            n = n()) %>%
+  mutate(se_score = sd_score / sqrt(n)) %>% 
+  ungroup()
+
+ggplot(df_plot, aes(x = SIBs, y = mean_score, group = Class, color = Class, shape = Class, fill = Class)) +
+  geom_point(size = 4) + 
+  geom_line(size = 1.25) +
+  #geom_jitter(aes(color = Class, shape = Class), width = 0.15, size = 2.25, alpha = 0.65) +
+  scale_color_manual(values = c("1" = "#1D6E9A", "2" = "#E4ACDF", "3" = "#221D23", "4" = "#FE5F55",
+                                 "5"= "#A36678")) +
+  scale_fill_manual(values = c("1" = "#1D6E9A", "2" = "#E4ACDF", "3" = "#221D23", "4" = "#FE5F55",
+                                "5" = "#A36678")) +
+  scale_shape_manual(values = c("1" = 21, "2" = 22, "3" = 23, "4" = 24, "5" = 25)) + 
+  labs(title = "SIBs by Affective Class",
+       x = " ",
+       y = "Score",
+       color = "Class",
+       shape = "Class") +
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "right") 
+
+ggsave("Outputs/LPA_by_SIBs.jpg", dpi = 2000, width = 8, height = 6)
+
